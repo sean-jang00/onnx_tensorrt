@@ -35,9 +35,10 @@ set(CUDA_NVCC_FLAGS
         )
 
 
-file(GLOB sources src/*.cu src/*.cpp src/*.hpp util/*.cpp util/cuda/*.cu )
+file(GLOB sources src/*.cu src/*.cpp src/*.hpp util/*.cpp util/cuda/*.cu include/*.h)
 file(GLOB includes util/*.h util/cuda/*.h)
 
+include_directories(${PROJECT_SOURCE_DIR}/include)
 include_directories(${PROJECT_INCLUDE_DIR}/util)
 include_directories(${PROJECT_BINARY_DIR}/util)
 include_directories(${OpenCV_INCLUDE_DIRS})

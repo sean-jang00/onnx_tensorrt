@@ -26,31 +26,19 @@
 #include "common.h"
 #include "logger.h"
 #include "buffers.h"
+#include "yolov4.h"
+#include "util.h"
 
 
-
-#include "rapidjson/document.h"
-#include "rapidjson/writer.h"
-#include "rapidjson/stringbuffer.h"
-
-
-//#include <string>
-
-
-#define INPUT_WIDTH 640
-#define INPUT_HEIGHT 384
 
 
 using namespace std;
 
-static const char onxx_model_name[512] = "../384.onnx";
-//static const char onxx_model_name[512] = "/home/suhyung/work/ROBO/g42_640_640.onnx";
-//static const char onxx_model_name[512] = "/home/suhyung/work/MyONNX/ssd.pytorch/test2.onnx";
 
+static const char onxx_model_name[512] = "../384.onnx";
 static const char file_name[256] = "/home/suhyung/Data/0917_valid_images/images/00100.png";
 
 int m_branch_single_tensor_size = 4;
-//int m_anchor[3][6] = {{12, 16, 19, 36, 40, 28}, {36, 75, 76, 55, 72, 146}, {142, 110, 192, 243, 459, 401}};
 float m_anchor[3][6] = {{13.23438, 9.28906, 11.28125, 26.76562, 5.30078, 75.56250}, 
                         {32.46875, 15.81250, 25.71875, 40.09375, 60.18750, 24.75000}, 
                         {35.50000,  82.37500, 95.31250,  45.34375, 172.87500, 105.62500}};
@@ -118,50 +106,11 @@ public:
   Severity reportableSeverity;
 };
 
+
 static Logger gLogger;
 static int gUseDLACore{-1};
 
-//PriorBoxParameters
 
-struct BBox
-{
-  float x1, y1, x2, y2;
-};
-std::vector<std::vector<uint32_t>> parse_int_double_array(const std::string key, rapidjson::Document &doc)
-{
-  std::vector<std::vector<uint32_t>> results;
-  return results;
-}
-
-std::string readBuffer(std::string const &path)
-{
-  string buffer;
-  ifstream stream(path.c_str(), ios::binary);
-
-  if (stream)
-  {
-    stream >> noskipws;
-    copy(istream_iterator<char>(stream), istream_iterator<char>(), back_inserter(buffer));
-  }
-
-  return buffer;
-}
-void ImageLoad(float *data, int width, int height, cv::Mat dst) //, const std::string& imgFile)
-{
-  unsigned char *line = NULL;
-  int offset_g = INPUT_WIDTH * INPUT_HEIGHT;
-  int offset_r = INPUT_WIDTH * INPUT_HEIGHT * 2;
-  for (int i = 0; i < INPUT_HEIGHT; ++i)
-  {
-    line = dst.ptr<unsigned char>(i);
-    for (int j = 0; j < INPUT_WIDTH; ++j)
-    {
-      data[i * INPUT_WIDTH + j + offset_r] = (float)line[j * 3] /255.f;
-      data[i * INPUT_WIDTH + j + offset_g] = (float)line[j * 3 + 1] /255.f;
-      data[i * INPUT_WIDTH + j] = (float)line[j * 3 + 2] /255.f;
-    }
-  }
-}
 void onnxToTRTModel(const std::string &modelFile, // name of the onnx model
                     unsigned int maxBatchSize,    // batch size - NB must be at least as large as the batch we want to run with
                     IHostMemory *&trtModelStream) // output buffer for the TensorRT model
@@ -223,7 +172,7 @@ void onnxToTRTModel(const std::string &modelFile, // name of the onnx model
 
        
 
-void doInference(IExecutionContext &context, float *input_data)
+void doInference(IExecutionContext &context, float *input_data, int input_width, int inpupt_height)
 {
   //char file_name[256];
 
@@ -245,13 +194,7 @@ void doInference(IExecutionContext &context, float *input_data)
     cout << " " << data_size << endl;    ;
   }
 
-
-  //sprintf(file_name, "/home/suhyung/Data/0917_valid_images/images/00100.png");
-
-
-  //for (int i = 0; i < 15;i++)
-  //  cout << "Pixel data " << ImgData[i*640] << endl;
-  CHECK(cudaMemcpyAsync(buffers[0], input_data, INPUT_HEIGHT * INPUT_WIDTH * 3 * sizeof(float), cudaMemcpyHostToDevice, NULL));
+  CHECK(cudaMemcpyAsync(buffers[0], input_data, input_width * inpupt_height * 3 * sizeof(float), cudaMemcpyHostToDevice, NULL));
   context.enqueue(1, buffers, NULL, nullptr);
 
   int offset[3];
@@ -262,78 +205,10 @@ void doInference(IExecutionContext &context, float *input_data)
   CHECK(cudaMemcpyAsync(inf_raw, buffers[1],  3 * 48 * 80 * 19 * sizeof(float), cudaMemcpyDeviceToHost, NULL));
   CHECK(cudaMemcpyAsync(inf_raw+offset[0], buffers[2],  3 * 24 * 40 * 19 * sizeof(float), cudaMemcpyDeviceToHost, NULL));
   CHECK(cudaMemcpyAsync(inf_raw+offset[0]+offset[1], buffers[3],  3 * 12 * 20 * 19 * sizeof(float), cudaMemcpyDeviceToHost, NULL));
-  //for (int i = 0; i < 19;i++)
-  //  cout << "inf     " << inf_raw[i] << endl;
+
 
   cout << "inference completed" << endl;
 
-}
-
-
-
-void calculate_size()
-{
-  for (int i = 0; i < m_output_layers; i++)
-  {
-    uint32_t num_boxes = m_x_grid_size[i] * m_y_grid_size[i] * 3;
-    m_total_boxes += num_boxes;
-    m_total_boxes *= 4;
-    m_single_boxes[i] = num_boxes;
-  }
-  m_total_boxes = 48 * 80 * 3 * 4 + 24 * 40 * 3 * 4 + 12 * 20 * 3 * 4;
-}
-
-void make_anchor_box()
-{
-  uint32_t index = 0;
-  for (int o = 0; o < m_output_layers; ++o)         // 3
-  {
-    for (int a = 0; a < 6; a+=2)   // 3
-    {
-      for (int y = 0; y < m_y_grid_size[o]; ++y)      // 48 -> 24 -> 12
-      {
-        for (int x = 0; x < m_x_grid_size[o]; ++x)    // 80 -> 40 -> 20
-        {
-          anchor_box[index++] = x;                  // X
-          anchor_box[index++] = y;                  // Y
-          anchor_box[index++] = m_anchor[o][a];     // W
-          anchor_box[index++] = m_anchor[o][a+1];   // H
-        }
-      }
-    }
-  }
-}
-void decode_wholebox(float *output, float *input, float *anchor, int box_count, float stride, int tensor_size)
-{
-
-  for (int i = 0; i < box_count; ++i)
-  {
-    input[tensor_size * i + 0] = 1.0f / (1 + exp(input[tensor_size * i + 0] * -1));  
-    input[tensor_size * i + 1] = 1.0f / (1 + exp(input[tensor_size * i + 1] * -1));  
-    input[tensor_size * i + 2] = 1.0f / (1 + exp(input[tensor_size * i + 2] * -1));  
-    input[tensor_size * i + 3] = 1.0f / (1 + exp(input[tensor_size * i + 3] * -1));  
-
-    float center_x = (input[tensor_size * i + 0] * 2 - 0.5 + anchor[4 * i + 0]) * stride;
-    float center_y = (input[tensor_size * i + 1] * 2 - 0.5 + anchor[4 * i + 1]) * stride;
-    float width = (input[tensor_size * i + 2] * 2) * (input[tensor_size * i + 2] * 2) * anchor[4 * i + 2];
-    float height = (input[tensor_size * i + 3] * 2) * (input[tensor_size * i + 3] * 2) * anchor[4 * i + 3];
-
-    output[tensor_size * i + 0] = (center_x - width / 2.) / INPUT_WIDTH;
-    output[tensor_size * i + 1] = (center_y - height / 2.) / INPUT_HEIGHT;
-    output[tensor_size * i + 2] = (center_x + width / 2.) / INPUT_WIDTH;
-    output[tensor_size * i + 3] = (center_y + height / 2.) / INPUT_HEIGHT;
-
-
-    /*float cx = pred_boxes[i][0]; 
-		float cy = pred_boxes[i][1]; 
-
-		pred_boxes[i][0] = cx - pred_boxes[i][2] * 0.5;
-		pred_boxes[i][1] = cy - pred_boxes[i][3] * 0.5;
-		pred_boxes[i][2] = cx + pred_boxes[i][2] * 0.5;
-		pred_boxes[i][3] = cy + pred_boxes[i][3] * 0.5;*/
-
-
-  }
 }
 
 void decode_confidence(float *output, float *input, int box_count, int tensor_size, float *anchor, int stride, int offset)
@@ -376,8 +251,8 @@ cv::Mat od_label_image[14];
 void loadLabelImages() {
     string label_od_class[14] = { 
         "person", "car", "pillar", "desk", "conf_booth", "street_lamp", 
-"outdoor_unit", "pattern_panel", "flag", "manhole", "person_hand"
-"chair", "sofa", "downspout" };
+        "outdoor_unit", "pattern_panel", "flag", "manhole", "person_hand"
+        "chair", "sofa", "downspout" };
     for (int i = 0; i < 14; i++) {
         string image_path = "../label/"+label_od_class[i] + ".png";
         od_label_image[i] = cv::imread(image_path, cv::IMREAD_COLOR);
@@ -386,32 +261,19 @@ void loadLabelImages() {
 
 int main(int argc, char **argv)
 {
-  float *ImgData = new float[3 * INPUT_HEIGHT * INPUT_WIDTH];
+  YoloV4 yolov4;
+  yolov4.make_anchor_box();
+  float *ImgData = new float[3 * yolov4.m_width * yolov4.m_height];
   cv::Mat cv_image;
 
   cv::VideoCapture cap(0); //카메라 생성
   if (!cap.isOpened())
   {
     cout << "Can't open the CAM" << endl;    ;
-    return 1;
+    //return 1;
   }
-
- /* cv::Mat img;
-	while (1)
-	{
-		cap >> img;
-		cv::imshow("camera img", img);
-		if (cv::waitKey(1) == 27)
-			break;
-	}*/
-
-
-
   char cache_path[512] = "serialized_engine.cache";
-  calculate_size();
   loadLabelImages();
-  anchor_box = new float[m_total_boxes];
-  make_anchor_box();
   
 
   IHostMemory *trtModelStream{nullptr};
@@ -436,64 +298,60 @@ int main(int argc, char **argv)
     }
     printf("convert completed\n");
 
-    CHECK(cudaMalloc(&buffers[0], INPUT_WIDTH * INPUT_HEIGHT * 3 * sizeof(float)));
+    CHECK(cudaMalloc(&buffers[0], yolov4.m_width * yolov4.m_height * 3 * sizeof(float)));
 
-    CHECK(cudaMalloc(&buffers[1], 3 * 48 * 80 * 19 * sizeof(float)));
-    CHECK(cudaMalloc(&buffers[2], 3 * 24 * 40 * 19 * sizeof(float)));
-    CHECK(cudaMalloc(&buffers[3], 3 * 12 * 20 * 19 * sizeof(float)));
+    CHECK(cudaMalloc(&buffers[1], yolov4.m_branch_size[0] * yolov4.m_anchor_size * sizeof(float)));
+    CHECK(cudaMalloc(&buffers[2], yolov4.m_branch_size[1] * yolov4.m_anchor_size  * sizeof(float)));
+    CHECK(cudaMalloc(&buffers[3], yolov4.m_branch_size[2] * yolov4.m_anchor_size * sizeof(float)));
 
-    int output_size = sizeof(float) * 3 * 48 * 80 * 19;
-    output_size += sizeof(float) * 3 * 24 * 40 * 19;
-    output_size += sizeof(float) * 3 * 12 * 20 * 19;
+    int output_size = (yolov4.m_branch_size[0] + yolov4.m_branch_size[0] + yolov4.m_branch_size[0]) * yolov4.m_anchor_size * sizeof(float);
+
 
     inf_output = (float *)malloc(output_size*sizeof(float));
     memset(inf_output, 0x00, output_size * sizeof(float));
-    
-
+  
     inf_raw = (float *)malloc(output_size*sizeof(float));
     memset(inf_raw, 0x00, output_size * sizeof(float));
     IExecutionContext *context = engine->createExecutionContext();
     
-    while(1)
-    {
+    //while(1)
+    //{
     
-    cap >> cv_image;
-    
-
-
-//    cv::Mat cv_image = cv::imread(file_name, cv::IMREAD_COLOR);
+    //cap >> cv_image;
+    cv_image = cv::imread(file_name, cv::IMREAD_COLOR);
     cv::Mat dst;
     printf("input image original resolution %d %d \n", cv_image.cols, cv_image.rows);
     if (cv_image.cols == 0)
     {
-    // continue;
-    cout << "check the input image " << endl;
+      cout << "check the input image " << endl;
     }
 
-    cv::resize(cv_image, dst, cv::Size(INPUT_WIDTH, 360), (0.0), (0.0), cv::INTER_LINEAR);
-    cv::copyMakeBorder(dst, dst, 12, 12, 0, 0, cv::BORDER_CONSTANT, cv::Scalar(114, 114, 114) );
+    cv::resize(cv_image, dst, cv::Size(yolov4.m_width, 360), (0.0), (0.0), cv::INTER_LINEAR);
+    cv::copyMakeBorder(dst, dst, 12, 12, 0, 0, cv::BORDER_CONSTANT, cv::Scalar(114, 114, 114) );  // zero padding
     cout << "imput resolution " << dst.cols  << "x" << dst.rows << endl;
 
-    ImageLoad(ImgData, INPUT_WIDTH, INPUT_HEIGHT, dst);
+    ImageLoad(ImgData, yolov4.m_width , yolov4.m_height, dst);
 
-    doInference(*context, ImgData);
+    doInference(*context, ImgData, yolov4.m_width, yolov4.m_height);
 
 
     do_sigmoid(inf_raw, inf_raw);
     uint32_t offset = 0;
     uint32_t anchor_offset = 0;
-    decode_confidence(inf_output, inf_raw, 48 * 80 * 3, 19, anchor_box, m_stride[0], 0);
-    decode_confidence(inf_output+ 48*80*3*19, inf_raw + 48*80*3*19, 24 * 40 * 3, 19, anchor_box, m_stride[1], 48 * 80 * 3 * 4);
-    decode_confidence(inf_output+ 48*80*3*19+24*40*3*19, inf_raw+ 48*80*3*19+24*40*3*19 , 12 * 20 * 3, 19, anchor_box, m_stride[2],(48*80+24*40)*12 );
+
+
+    decode_confidence(inf_output, inf_raw, 48 * 80 * 3, 19, yolov4.anchor_box, m_stride[0], 0);
+    decode_confidence(inf_output+ 48*80*3*19, inf_raw + 48*80*3*19, 24 * 40 * 3, 19, yolov4.anchor_box, m_stride[1], 48 * 80 * 3 * 4);
+    decode_confidence(inf_output+ 48*80*3*19+24*40*3*19, inf_raw+ 48*80*3*19+24*40*3*19 , 12 * 20 * 3, 19, yolov4.anchor_box, m_stride[2],(48*80+24*40)*12 );
     vector<DetectedObject> array_obj;
     for (int i = 0; i < output_size; i += 19)
     {
         if(inf_output[i+4]>0.1)
         {
-          float x1 = (inf_output[i+0] - inf_output[i+2] / 2.) / INPUT_WIDTH;
-          float y1 = (inf_output[i+1] - inf_output[i+3] / 2.) / INPUT_HEIGHT;
-          float x2 = (inf_output[i+0] + inf_output[i+2] / 2.) / INPUT_WIDTH;
-          float y2 = (inf_output[i+1] + inf_output[i+3] / 2.) / INPUT_HEIGHT;
+          float x1 = (inf_output[i+0] - inf_output[i+2] / 2.) / yolov4.m_width;
+          float y1 = (inf_output[i+1] - inf_output[i+3] / 2.) / yolov4.m_height;
+          float x2 = (inf_output[i+0] + inf_output[i+2] / 2.) / yolov4.m_width;
+          float y2 = (inf_output[i+1] + inf_output[i+3] / 2.) / yolov4.m_height;
           DetectedObject obj;
           obj.x1 = x1;
           obj.x2 = x2;
@@ -564,10 +422,9 @@ int main(int argc, char **argv)
       
 
       cv::imshow("after", cv_image);
-      if (cv::waitKey(1) == 27)
-			break;
-    
-    }
+      //if (cv::waitKey(1) == 27)
+			//break;
+    //}
    cv::waitKey(-1);
 
 
@@ -582,7 +439,6 @@ int main(int argc, char **argv)
     }
     free(inf_output);
     free(inf_raw);
-    delete (anchor_box);
     delete[] ImgData;
 
     return 1;
