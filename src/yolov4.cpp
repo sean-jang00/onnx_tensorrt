@@ -15,6 +15,7 @@ YoloV4::YoloV4()
   //48 * 80 * 3 * 4 + 24 * 40 * 3 * 4 + 12 * 20 * 3 * 4;
 
   anchor_box = new float[m_total_boxes];
+  make_anchor_box();
 }
 void YoloV4::make_anchor_box()
 {

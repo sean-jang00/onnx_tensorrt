@@ -35,7 +35,7 @@
 using namespace std;
 
 
-static const char onxx_model_name[512] = "../384.onnx";
+static const char onxx_model_name[512] = "../384_sigmoid.onnx";
 static const char file_name[256] = "/home/suhyung/Data/0917_valid_images/images/00100.png";
 
 int m_branch_single_tensor_size = 4;
@@ -172,7 +172,7 @@ void onnxToTRTModel(const std::string &modelFile, // name of the onnx model
 
        
 
-void doInference(IExecutionContext &context, float *input_data, int input_width, int inpupt_height)
+void doInference(IExecutionContext &context)//, float *input_data, int input_width, int inpupt_height)
 {
   //char file_name[256];
 
@@ -194,17 +194,7 @@ void doInference(IExecutionContext &context, float *input_data, int input_width,
     cout << " " << data_size << endl;    ;
   }
 
-  CHECK(cudaMemcpyAsync(buffers[0], input_data, input_width * inpupt_height * 3 * sizeof(float), cudaMemcpyHostToDevice, NULL));
   context.enqueue(1, buffers, NULL, nullptr);
-
-  int offset[3];
-  offset[0] = 3 * 48 * 80 * 19;
-  offset[1] = 3 * 24 * 40 * 19;
-  offset[2] = 3 * 12 * 20 * 19;
-
-  CHECK(cudaMemcpyAsync(inf_raw, buffers[1],  3 * 48 * 80 * 19 * sizeof(float), cudaMemcpyDeviceToHost, NULL));
-  CHECK(cudaMemcpyAsync(inf_raw+offset[0], buffers[2],  3 * 24 * 40 * 19 * sizeof(float), cudaMemcpyDeviceToHost, NULL));
-  CHECK(cudaMemcpyAsync(inf_raw+offset[0]+offset[1], buffers[3],  3 * 12 * 20 * 19 * sizeof(float), cudaMemcpyDeviceToHost, NULL));
 
 
   cout << "inference completed" << endl;
@@ -261,6 +251,8 @@ void loadLabelImages() {
 
 int main(int argc, char **argv)
 {
+  int origin_width;
+  int origin_height;
   YoloV4 yolov4;
   yolov4.make_anchor_box();
   float *ImgData = new float[3 * yolov4.m_width * yolov4.m_height];
@@ -320,6 +312,9 @@ int main(int argc, char **argv)
     //cap >> cv_image;
     cv_image = cv::imread(file_name, cv::IMREAD_COLOR);
     cv::Mat dst;
+
+    origin_width = cv_image.cols;
+    origin_height = cv_image.rows;
     printf("input image original resolution %d %d \n", cv_image.cols, cv_image.rows);
     if (cv_image.cols == 0)
     {
@@ -332,10 +327,22 @@ int main(int argc, char **argv)
 
     ImageLoad(ImgData, yolov4.m_width , yolov4.m_height, dst);
 
-    doInference(*context, ImgData, yolov4.m_width, yolov4.m_height);
+
+    CHECK(cudaMemcpyAsync(buffers[0], ImgData, yolov4.m_width* yolov4.m_height * 3 * sizeof(float), cudaMemcpyHostToDevice, NULL));
 
 
-    do_sigmoid(inf_raw, inf_raw);
+    doInference(*context);
+
+
+    int dst_offset = 0;
+    for (int i = 0; i < 3;i++)
+    {
+      CHECK(cudaMemcpyAsync(inf_raw+dst_offset, buffers[i+1], yolov4.m_branch_size[i] * yolov4.m_anchor_size * sizeof(float), cudaMemcpyDeviceToHost, NULL));
+      dst_offset += yolov4.m_branch_size[i] * yolov4.m_anchor_size;
+    }
+
+
+    //do_sigmoid(inf_raw, inf_raw);
     uint32_t offset = 0;
     uint32_t anchor_offset = 0;
 
@@ -385,7 +392,7 @@ int main(int argc, char **argv)
     {
       confidences.push_back(array_obj[i].conf);
       cls_id.push_back(array_obj[i].cls);
-      boxes.push_back(cv::Rect(cv::Point(array_obj[i].x1 * 1920, array_obj[i].y1 * 1080), cv::Point(array_obj[i].x2 * 1920, array_obj[i].y2 * 1080)));
+      boxes.push_back(cv::Rect(cv::Point(array_obj[i].x1 * origin_width, array_obj[i].y1 * origin_height), cv::Point(array_obj[i].x2 * origin_width, array_obj[i].y2 * origin_height)));
     }
     cv::dnn::NMSBoxes(boxes, confidences, 0.4, 0.5, indices);
     for (int i = 0; i < indices.size();i++)
@@ -402,30 +409,29 @@ int main(int argc, char **argv)
         cv::Rect outRect;
         outRect.x = srcRects[i].tl().x;
         outRect.y = srcRects[i].tl().y;
-        outRect.width = min(srcRects[i].br().x - srcRects[i].tl().x, 1920 - outRect.x);
-        outRect.height = min(srcRects[i].br().y - srcRects[i].tl().y, 1080 - outRect.y);*/
+        outRect.width = min(srcRects[i].br().x - srcRects[i].tl().x, origin_width - outRect.x);
+        outRect.height = min(srcRects[i].br().y - srcRects[i].tl().y, origin_height - outRect.y);*/
         cv::rectangle(cv_image, srcRects[i], cv::Scalar(255, 0, 0), 5);
       /*  if (0)//od_label_image[cls_num].cols > 0 && od_label_image[cls_num].rows > 0)
 
         {
           cv::Rect rect_od_label(outRect.x, outRect.y - 27,
                                   od_label_image[cls_num].cols, od_label_image[cls_num].rows);
-          rect_od_label.x = min(rect_od_label.x, 1920 - od_label_image[cls_num].cols);
-          rect_od_label.y = min(rect_od_label.y, 1080 - od_label_image[cls_num].rows);
+          rect_od_label.x = min(rect_od_label.x, origin_width - od_label_image[cls_num].cols);
+          rect_od_label.y = min(rect_od_label.y, origin_height - od_label_image[cls_num].rows);
           rect_od_label.x = max(rect_od_label.x, 0);
           rect_od_label.y = max(rect_od_label.y, 0);
   //        od_label_image[cls_num].copyTo(cv_image(rect_od_label));
         }*/
     }
+    cv::Mat cv_vis;
+    cv::resize(cv_image, cv_vis, cv::Size(origin_width/2, origin_height/2), (0.0), (0.0), cv::INTER_LINEAR);
 
-    
-      
-
-      cv::imshow("after", cv_image);
-      //if (cv::waitKey(1) == 27)
-			//break;
+    cv::imshow("after", cv_vis);
+    //if (cv::waitKey(1) == 27)
+    //break;
     //}
-   cv::waitKey(-1);
+    cv::waitKey(-1);
 
 
     cudaEvent_t m_start;
