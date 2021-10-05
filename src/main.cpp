@@ -155,9 +155,6 @@ void onnxToTRTModel(const std::string &modelFile, // name of the onnx model
   ICudaEngine *engine = builder->buildCudaEngine(*network);
   assert(engine);
 
-  //string input_name = network->getInput(0)->getName();
-  //std::cout << "Hello, world!" << input_name << std::endl;
-  //network->getInput(0)->setDynamicRange(-tensorMap.at(input_name), tensorMap.at(input_name));
 
   // we can destroy the parser
   parser->destroy();
@@ -210,33 +207,10 @@ void decode_confidence(float *output, float *input, int box_count, int tensor_si
     output[tensor_size * i + 1] = (input[tensor_size * i + 1] * 2 - 0.5 + anchor[4 * i + 1 + offset]) * stride;
     output[tensor_size * i + 2] = (input[tensor_size * i + 2] * 2) * (input[tensor_size * i + 2] * 2) * anchor[4 * i + 2 + offset];
     output[tensor_size * i + 3] = (input[tensor_size * i + 3] * 2) * (input[tensor_size * i + 3] * 2) * anchor[4 * i + 3 + offset];
-
-    for (int j = 4; j < 19;j++)
-      output[tensor_size * i + j] = input[tensor_size * i + j];
   }
  
 }
-void do_sigmoid(float *output, float *input)
-{
-  for (int i = 0; i < (80*48+40*24+20*12)*(19*3);i++)
-  {
-    output[i] = 1.0f / (1 + exp(input[i] * -1));
-    if(i%19==4 && output[i%19+4]>0.4)
-    {
-      cout << "detected " << output[i % 19 + 4] << endl;
-    }
-  }
-    
-}
-struct DetectedObject
-{
-  float x1;
-  float x2;
-  float y1;
-  float y2;
-  int cls;
-  float conf;
-};
+
 cv::Mat od_label_image[14];
 void loadLabelImages() {
     string label_od_class[14] = { 
@@ -346,41 +320,14 @@ int main(int argc, char **argv)
     uint32_t offset = 0;
     uint32_t anchor_offset = 0;
 
-
-    decode_confidence(inf_output, inf_raw, 48 * 80 * 3, 19, yolov4.anchor_box, m_stride[0], 0);
-    decode_confidence(inf_output+ 48*80*3*19, inf_raw + 48*80*3*19, 24 * 40 * 3, 19, yolov4.anchor_box, m_stride[1], 48 * 80 * 3 * 4);
-    decode_confidence(inf_output+ 48*80*3*19+24*40*3*19, inf_raw+ 48*80*3*19+24*40*3*19 , 12 * 20 * 3, 19, yolov4.anchor_box, m_stride[2],(48*80+24*40)*12 );
-    vector<DetectedObject> array_obj;
-    for (int i = 0; i < output_size; i += 19)
+    memcpy(inf_output, inf_raw, (yolov4.m_branch_size[0] + yolov4.m_branch_size[1] + yolov4.m_branch_size[2]) * yolov4.m_anchor_size * sizeof(float));
+    dst_offset = 0;
+    for (int i = 0; i < 3; i++)
     {
-        if(inf_output[i+4]>0.1)
-        {
-          float x1 = (inf_output[i+0] - inf_output[i+2] / 2.) / yolov4.m_width;
-          float y1 = (inf_output[i+1] - inf_output[i+3] / 2.) / yolov4.m_height;
-          float x2 = (inf_output[i+0] + inf_output[i+2] / 2.) / yolov4.m_width;
-          float y2 = (inf_output[i+1] + inf_output[i+3] / 2.) / yolov4.m_height;
-          DetectedObject obj;
-          obj.x1 = x1;
-          obj.x2 = x2;
-          obj.y1 = y1;
-          obj.y2 = y2;
+      decode_confidence(inf_output+dst_offset, inf_raw+dst_offset, yolov4.m_branch_size[i], yolov4.m_anchor_size, yolov4.anchor_box, m_stride[i], dst_offset*4/yolov4.m_anchor_size);
+      dst_offset += yolov4.m_branch_size[i] * yolov4.m_anchor_size;
 
-          float max_conf=0;
-          int max_cls=5;
-          for (int j = 5; j < 19; j++)
-          {
-            if(max_conf<inf_output[i + j])
-            {
-              max_cls = j;
-              max_conf = inf_output[i + j];
-            }
-            
-          }
-          obj.cls = max_cls;
-          obj.conf = inf_output[i + 4]*max_conf;
-          array_obj.push_back(obj);
-        }
-    }
+    } 
 
     vector<int> indices;
     vector<cv::Rect> boxes;
@@ -388,12 +335,31 @@ int main(int argc, char **argv)
     vector<int> cls_id;
     std::vector<cv::Rect> srcRects;
 
-    for (int i = 0; i < array_obj.size(); i++)
+
+    for (int i = 0; i < output_size; i += yolov4.m_anchor_size)
     {
-      confidences.push_back(array_obj[i].conf);
-      cls_id.push_back(array_obj[i].cls);
-      boxes.push_back(cv::Rect(cv::Point(array_obj[i].x1 * origin_width, array_obj[i].y1 * origin_height), cv::Point(array_obj[i].x2 * origin_width, array_obj[i].y2 * origin_height)));
+        if(inf_output[i+4]>0.1)
+        {
+          float x1 = (inf_output[i+0] - inf_output[i+2] / 2.) / yolov4.m_width;
+          float y1 = (inf_output[i+1] - inf_output[i+3] / 2.) / yolov4.m_height;
+          float x2 = (inf_output[i+0] + inf_output[i+2] / 2.) / yolov4.m_width;
+          float y2 = (inf_output[i+1] + inf_output[i+3] / 2.) / yolov4.m_height;
+          float max_conf=0;
+          int max_cls=5;
+          for (int j = 5; j < yolov4.m_anchor_size; j++)
+          {
+            if(max_conf<inf_output[i + j])
+            {
+              max_cls = j;
+              max_conf = inf_output[i + j];
+            }
+          }
+          confidences.push_back(inf_output[i + 4] * max_conf);
+          cls_id.push_back(max_cls);
+          boxes.push_back(cv::Rect(cv::Point(x1 * origin_width, y1 * origin_height), cv::Point(x2 * origin_width, y2 * origin_height)));
+        }
     }
+
     cv::dnn::NMSBoxes(boxes, confidences, 0.4, 0.5, indices);
     for (int i = 0; i < indices.size();i++)
     {
