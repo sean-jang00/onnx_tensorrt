@@ -28,6 +28,7 @@
 #include "buffers.h"
 #include "yolov4.h"
 #include "util.h"
+#include "kernel.h"
 
 
 
@@ -299,10 +300,16 @@ int main(int argc, char **argv)
     cv::copyMakeBorder(dst, dst, 12, 12, 0, 0, cv::BORDER_CONSTANT, cv::Scalar(114, 114, 114) );  // zero padding
     cout << "imput resolution " << dst.cols  << "x" << dst.rows << endl;
 
-    ImageLoad(ImgData, yolov4.m_width , yolov4.m_height, dst);
+//    ImageLoad(ImgData, yolov4.m_width , yolov4.m_height, dst);
+//    CHECK(cudaMemcpyAsync(buffers[0], ImgData, yolov4.m_width* yolov4.m_height * 3 * sizeof(float), cudaMemcpyHostToDevice, NULL));
 
 
-    CHECK(cudaMemcpyAsync(buffers[0], ImgData, yolov4.m_width* yolov4.m_height * 3 * sizeof(float), cudaMemcpyHostToDevice, NULL));
+    void *prepro_d;
+    CHECK(cudaMalloc(&prepro_d, yolov4.m_width * yolov4.m_height * 3 * sizeof(unsigned char)));
+    CHECK(cudaMemcpy(prepro_d, dst.data, yolov4.m_width * yolov4.m_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
+    float m_mean[3] = {0., 0., 0.};
+    gpuPreProcessLite(prepro_d, buffers[0], yolov4.m_width, yolov4.m_height, m_mean);
+    CHECK(cudaFree(prepro_d));
 
 
     doInference(*context);
