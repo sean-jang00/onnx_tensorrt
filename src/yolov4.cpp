@@ -11,7 +11,7 @@ YoloV4::YoloV4()
   m_branch_size[1] = 24 * 40 * 3;
   m_branch_size[2] = 12 * 20 * 3;
 
-  int m_total_boxes = (m_branch_size[0] + m_branch_size[0] + m_branch_size[0]) * 4;
+  int m_total_boxes = (m_branch_size[0] + m_branch_size[1] + m_branch_size[2]) * 4;
   //48 * 80 * 3 * 4 + 24 * 40 * 3 * 4 + 12 * 20 * 3 * 4;
 
   anchor_box = new float[m_total_boxes];

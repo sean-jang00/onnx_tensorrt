@@ -141,7 +141,7 @@ void onnxToTRTModel(const std::string &modelFile, // name of the onnx model
   }
 
   // Build the engine
-  builder->setMaxBatchSize(2);
+  builder->setMaxBatchSize(1);
   builder->setFp16Mode(1);
   builder->setMaxWorkspaceSize(1 << 20);
   if (!builder->platformHasFastInt8())
@@ -271,7 +271,7 @@ int main(int argc, char **argv)
     CHECK(cudaMalloc(&buffers[2], yolov4.m_branch_size[1] * yolov4.m_anchor_size  * sizeof(float)));
     CHECK(cudaMalloc(&buffers[3], yolov4.m_branch_size[2] * yolov4.m_anchor_size * sizeof(float)));
 
-    int output_size = (yolov4.m_branch_size[0] + yolov4.m_branch_size[0] + yolov4.m_branch_size[0]) * yolov4.m_anchor_size * sizeof(float);
+    int output_size = (yolov4.m_branch_size[0] + yolov4.m_branch_size[1] + yolov4.m_branch_size[2]) * yolov4.m_anchor_size * sizeof(float);
 
 
     inf_output = (float *)malloc(output_size*sizeof(float));
@@ -280,130 +280,129 @@ int main(int argc, char **argv)
     inf_raw = (float *)malloc(output_size*sizeof(float));
     memset(inf_raw, 0x00, output_size * sizeof(float));
     IExecutionContext *context = engine->createExecutionContext();
-    
-    //while(1)
-    //{
-    
-    //cap >> cv_image;
-    cv_image = cv::imread(file_name, cv::IMREAD_COLOR);
     cv::Mat dst;
+    cv::VideoCapture vcap("/home/suhyung/Downloads/WIN_20210917_03_10_34_Pro.mp4");
 
-    origin_width = cv_image.cols;
-    origin_height = cv_image.rows;
-    printf("input image original resolution %d %d \n", cv_image.cols, cv_image.rows);
-    if (cv_image.cols == 0)
+    while(1)
     {
-      cout << "check the input image " << endl;
-    }
 
-    cv::resize(cv_image, dst, cv::Size(yolov4.m_width, 360), (0.0), (0.0), cv::INTER_LINEAR);
-    cv::copyMakeBorder(dst, dst, 12, 12, 0, 0, cv::BORDER_CONSTANT, cv::Scalar(114, 114, 114) );  // zero padding
-    cout << "imput resolution " << dst.cols  << "x" << dst.rows << endl;
+      vcap >> cv_image;
+    //  cv_image = cv::imread(file_name, cv::IMREAD_COLOR);
+      
+      origin_width = cv_image.cols;
+      origin_height = cv_image.rows;
+      printf("input image original resolution %d %d \n", cv_image.cols, cv_image.rows);
+      if (cv_image.cols == 0)
+      {
+        cout << "check the input image " << endl;
+      }
 
-//    ImageLoad(ImgData, yolov4.m_width , yolov4.m_height, dst);
-//    CHECK(cudaMemcpyAsync(buffers[0], ImgData, yolov4.m_width* yolov4.m_height * 3 * sizeof(float), cudaMemcpyHostToDevice, NULL));
+      cv::resize(cv_image, dst, cv::Size(yolov4.m_width, 360), (0.0), (0.0), cv::INTER_LINEAR);
+      cv::copyMakeBorder(dst, dst, 12, 12, 0, 0, cv::BORDER_CONSTANT, cv::Scalar(114, 114, 114) );  // zero padding
+      cout << "model input resolution " << dst.cols  << "x" << dst.rows << endl;
 
+      ImageLoad(ImgData, yolov4.m_width , yolov4.m_height, dst);
+      CHECK(cudaMemcpyAsync(buffers[0], ImgData, yolov4.m_width * yolov4.m_height * 3 * sizeof(float), cudaMemcpyHostToDevice, NULL));
 
-    void *prepro_d;
-    CHECK(cudaMalloc(&prepro_d, yolov4.m_width * yolov4.m_height * 3 * sizeof(unsigned char)));
-    CHECK(cudaMemcpy(prepro_d, dst.data, yolov4.m_width * yolov4.m_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
-    float m_mean[3] = {0., 0., 0.};
-    gpuPreProcessLite(prepro_d, buffers[0], yolov4.m_width, yolov4.m_height, m_mean);
-    CHECK(cudaFree(prepro_d));
-
-
-    doInference(*context);
-
-
-    int dst_offset = 0;
-    for (int i = 0; i < 3;i++)
-    {
-      CHECK(cudaMemcpyAsync(inf_raw+dst_offset, buffers[i+1], yolov4.m_branch_size[i] * yolov4.m_anchor_size * sizeof(float), cudaMemcpyDeviceToHost, NULL));
-      dst_offset += yolov4.m_branch_size[i] * yolov4.m_anchor_size;
-    }
-
-
-    //do_sigmoid(inf_raw, inf_raw);
-    uint32_t offset = 0;
-    uint32_t anchor_offset = 0;
-
-    memcpy(inf_output, inf_raw, (yolov4.m_branch_size[0] + yolov4.m_branch_size[1] + yolov4.m_branch_size[2]) * yolov4.m_anchor_size * sizeof(float));
-    dst_offset = 0;
-    for (int i = 0; i < 3; i++)
-    {
-      decode_confidence(inf_output+dst_offset, inf_raw+dst_offset, yolov4.m_branch_size[i], yolov4.m_anchor_size, yolov4.anchor_box, m_stride[i], dst_offset*4/yolov4.m_anchor_size);
-      dst_offset += yolov4.m_branch_size[i] * yolov4.m_anchor_size;
-
-    } 
-
-    vector<int> indices;
-    vector<cv::Rect> boxes;
-    vector<float> confidences;
-    vector<int> cls_id;
-    std::vector<cv::Rect> srcRects;
+    /*  void *prepro_d;
+      CHECK(cudaMalloc(&prepro_d, yolov4.m_width * yolov4.m_height * 3 * sizeof(unsigned char)));
+      CHECK(cudaMemcpy(prepro_d, dst.data, yolov4.m_width * yolov4.m_height * 3 * sizeof(unsigned char), cudaMemcpyHostToDevice));
+      float m_mean[3] = {0., 0., 0.};
+      gpuPreProcessLite(prepro_d, buffers[0], yolov4.m_width, yolov4.m_height, m_mean);
+      CHECK(cudaFree(prepro_d));
+  */
+      doInference(*context);
 
 
-    for (int i = 0; i < output_size; i += yolov4.m_anchor_size)
-    {
-        if(inf_output[i+4]>0.1)
-        {
-          float x1 = (inf_output[i+0] - inf_output[i+2] / 2.) / yolov4.m_width;
-          float y1 = (inf_output[i+1] - inf_output[i+3] / 2.) / yolov4.m_height;
-          float x2 = (inf_output[i+0] + inf_output[i+2] / 2.) / yolov4.m_width;
-          float y2 = (inf_output[i+1] + inf_output[i+3] / 2.) / yolov4.m_height;
-          float max_conf=0;
-          int max_cls=5;
-          for (int j = 5; j < yolov4.m_anchor_size; j++)
+      int dst_offset = 0;
+      for (int i = 0; i < 3;i++)
+      {
+        CHECK(cudaMemcpyAsync(inf_raw+dst_offset, buffers[i+1], yolov4.m_branch_size[i] * yolov4.m_anchor_size * sizeof(float), cudaMemcpyDeviceToHost, NULL));
+        dst_offset += yolov4.m_branch_size[i] * yolov4.m_anchor_size;
+      }
+
+
+      //do_sigmoid(inf_raw, inf_raw);
+      uint32_t offset = 0;
+      uint32_t anchor_offset = 0;
+    // for (int i = 0; i < 19;i++)
+    //   cout << inf_raw[i] << endl;
+      memcpy(inf_output, inf_raw, (yolov4.m_branch_size[0] + yolov4.m_branch_size[1] + yolov4.m_branch_size[2]) * yolov4.m_anchor_size * sizeof(float));
+      dst_offset = 0;
+      for (int i = 0; i < 3; i++)
+      {
+        decode_confidence(inf_output+dst_offset, inf_raw+dst_offset, yolov4.m_branch_size[i], yolov4.m_anchor_size, yolov4.anchor_box, m_stride[i], dst_offset*4/yolov4.m_anchor_size);
+        dst_offset += yolov4.m_branch_size[i] * yolov4.m_anchor_size;
+
+      } 
+
+      vector<int> indices;
+      vector<cv::Rect> boxes;
+      vector<float> confidences;
+      vector<int> cls_id;
+      std::vector<cv::Rect> srcRects;
+
+
+      for (int i = 0; i < output_size; i += yolov4.m_anchor_size)
+      {
+          if(inf_output[i+4]>0.1)
           {
-            if(max_conf<inf_output[i + j])
+            float x1 = (inf_output[i+0] - inf_output[i+2] / 2.) / yolov4.m_width;
+            float y1 = (inf_output[i+1] - inf_output[i+3] / 2.) / yolov4.m_height;
+            float x2 = (inf_output[i+0] + inf_output[i+2] / 2.) / yolov4.m_width;
+            float y2 = (inf_output[i+1] + inf_output[i+3] / 2.) / yolov4.m_height;
+            float max_conf=0;
+            int max_cls=5;
+            for (int j = 5; j < yolov4.m_anchor_size; j++)
             {
-              max_cls = j;
-              max_conf = inf_output[i + j];
+              if(max_conf<inf_output[i + j])
+              {
+                max_cls = j;
+                max_conf = inf_output[i + j];
+              }
             }
+            confidences.push_back(inf_output[i + 4] * max_conf);
+            cls_id.push_back(max_cls);
+            boxes.push_back(cv::Rect(cv::Point(x1 * origin_width, y1 * origin_height), cv::Point(x2 * origin_width, y2 * origin_height)));
           }
-          confidences.push_back(inf_output[i + 4] * max_conf);
-          cls_id.push_back(max_cls);
-          boxes.push_back(cv::Rect(cv::Point(x1 * origin_width, y1 * origin_height), cv::Point(x2 * origin_width, y2 * origin_height)));
-        }
+      }
+
+      cv::dnn::NMSBoxes(boxes, confidences, 0.4, 0.5, indices);
+      for (int i = 0; i < indices.size();i++)
+      {
+        int idx = indices[i];
+        srcRects.push_back(boxes[idx]);
+      }
+
+      for (int i = 0; i < srcRects.size();i++)
+      {
+        /* int idx = indices[i];
+          int cls_num = cls_id[idx] - 5;
+          cv::Rect outRect;
+          outRect.x = srcRects[i].tl().x;
+          outRect.y = srcRects[i].tl().y;
+          outRect.width = min(srcRects[i].br().x - srcRects[i].tl().x, origin_width - outRect.x);
+          outRect.height = min(srcRects[i].br().y - srcRects[i].tl().y, origin_height - outRect.y);*/
+          cv::rectangle(cv_image, srcRects[i], cv::Scalar(255, 0, 0), 5);
+        /*  if (0)//od_label_image[cls_num].cols > 0 && od_label_image[cls_num].rows > 0)
+
+          {
+            cv::Rect rect_od_label(outRect.x, outRect.y - 27,
+                                    od_label_image[cls_num].cols, od_label_image[cls_num].rows);
+            rect_od_label.x = min(rect_od_label.x, origin_width - od_label_image[cls_num].cols);
+            rect_od_label.y = min(rect_od_label.y, origin_height - od_label_image[cls_num].rows);
+            rect_od_label.x = max(rect_od_label.x, 0);
+            rect_od_label.y = max(rect_od_label.y, 0);
+    //        od_label_image[cls_num].copyTo(cv_image(rect_od_label));
+          }*/
+      }
+      cv::Mat cv_vis;
+      cv::resize(cv_image, cv_vis, cv::Size(origin_width/2, origin_height/2), (0.0), (0.0), cv::INTER_LINEAR);
+
+        cv::imshow("after", cv_vis);
+      if (cv::waitKey(1) == 27)
+        break;
     }
-
-    cv::dnn::NMSBoxes(boxes, confidences, 0.4, 0.5, indices);
-    for (int i = 0; i < indices.size();i++)
-    {
-      int idx = indices[i];
-      srcRects.push_back(boxes[idx]);
-    }
-
-    //cv::Mat cv_image = cv::imread(file_name, cv::IMREAD_COLOR);
-    for (int i = 0; i < srcRects.size();i++)
-    {
-       /* int idx = indices[i];
-        int cls_num = cls_id[idx] - 5;
-        cv::Rect outRect;
-        outRect.x = srcRects[i].tl().x;
-        outRect.y = srcRects[i].tl().y;
-        outRect.width = min(srcRects[i].br().x - srcRects[i].tl().x, origin_width - outRect.x);
-        outRect.height = min(srcRects[i].br().y - srcRects[i].tl().y, origin_height - outRect.y);*/
-        cv::rectangle(cv_image, srcRects[i], cv::Scalar(255, 0, 0), 5);
-      /*  if (0)//od_label_image[cls_num].cols > 0 && od_label_image[cls_num].rows > 0)
-
-        {
-          cv::Rect rect_od_label(outRect.x, outRect.y - 27,
-                                  od_label_image[cls_num].cols, od_label_image[cls_num].rows);
-          rect_od_label.x = min(rect_od_label.x, origin_width - od_label_image[cls_num].cols);
-          rect_od_label.y = min(rect_od_label.y, origin_height - od_label_image[cls_num].rows);
-          rect_od_label.x = max(rect_od_label.x, 0);
-          rect_od_label.y = max(rect_od_label.y, 0);
-  //        od_label_image[cls_num].copyTo(cv_image(rect_od_label));
-        }*/
-    }
-    cv::Mat cv_vis;
-    cv::resize(cv_image, cv_vis, cv::Size(origin_width/2, origin_height/2), (0.0), (0.0), cv::INTER_LINEAR);
-
-    cv::imshow("after", cv_vis);
-    //if (cv::waitKey(1) == 27)
-    //break;
-    //}
     cv::waitKey(-1);
 
 
