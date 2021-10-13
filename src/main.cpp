@@ -281,7 +281,8 @@ int main(int argc, char **argv)
     memset(inf_raw, 0x00, output_size * sizeof(float));
     IExecutionContext *context = engine->createExecutionContext();
     cv::Mat dst;
-    cv::VideoCapture vcap("/home/suhyung/Downloads/WIN_20210917_03_10_34_Pro.mp4");
+    //cv::VideoCapture vcap("/home/suhyung/Downloads/WIN_20210917_03_10_34_Pro.mp4");
+    cv::VideoCapture vcap("../WIN_20210917_03_10_34_Pro.mp4");
 
     while(1)
     {

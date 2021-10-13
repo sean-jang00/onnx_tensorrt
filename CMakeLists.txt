@@ -6,7 +6,6 @@ set(BUILD_DEPS "YES" CACHE BOOL "If YES, will install dependencies into sandbox.
 
 set(PROJECT_OUTPUT_DIR  ${PROJECT_BINARY_DIR})
 #set(PROJECT_INCLUDE_DIR ${PROJECT_OUTPUT_DIR}/include)
-
 #file(MAKE_DIRECTORY ${PROJECT_INCLUDE_DIR})
 file(MAKE_DIRECTORY ${PROJECT_OUTPUT_DIR})
 
@@ -25,8 +24,12 @@ find_package(OpenCV REQUIRED)
 message(" -- CUDA and Opencv Found ")
 message(" -- opencv_version  "${OpenCV_VERSION})
 
-include_directories("/home/suhyung/TensorRT/TensorRT-7.2.3.4/samples/common")
-include_directories("/home/suhyung/TensorRT/TensorRT-7.2.3.4/include")
+#include_directories("/home/suhyung/TensorRT/TensorRT-7.2.3.4/samples/common")
+#include_directories("/home/suhyung/TensorRT/TensorRT-7.2.3.4/include")
+include_directories("/workspace/tensorrt/samples/common")
+include_directories("/usr/include/x86_64-linux-gnu/")
+
+
 
 set(CUDA_NVCC_FLAGS
         ${CUDA_NVCC_FLAGS};--disable-warnings;
@@ -54,10 +57,17 @@ cuda_add_library(inferLib SHARED ${sources})
 #target_link_libraries(inferLib /usr/lib/aarch64-linux-gnu/libnvonnxparser.so)
 
 #target_link_libraries(inferLib /home/suhyung/TensorRT/TensorRT-5.0.2.6/lib/libnvcaffe_parser.so)
-target_link_libraries(inferLib /home/suhyung/TensorRT/TensorRT-7.2.3.4/lib/libnvinfer.so)
-target_link_libraries(inferLib /home/suhyung/TensorRT/TensorRT-7.2.3.4/lib/libnvinfer_plugin.so)
-target_link_libraries(inferLib /home/suhyung/TensorRT/TensorRT-7.2.3.4/lib/libnvparsers.so)
-target_link_libraries(inferLib /home/suhyung/TensorRT/TensorRT-7.2.3.4/lib/libnvonnxparser.so)
+#target_link_libraries(inferLib /home/suhyung/TensorRT/TensorRT-7.2.3.4/lib/libnvinfer.so)
+#target_link_libraries(inferLib /home/suhyung/TensorRT/TensorRT-7.2.3.4/lib/libnvinfer_plugin.so)
+#target_link_libraries(inferLib /home/suhyung/TensorRT/TensorRT-7.2.3.4/lib/libnvparsers.so)
+#target_link_libraries(inferLib /home/suhyung/TensorRT/TensorRT-7.2.3.4/lib/libnvonnxparser.so)
+
+
+
+target_link_libraries(inferLib /usr/lib/x86_64-linux-gnu/libnvinfer.so)
+target_link_libraries(inferLib /usr/lib/x86_64-linux-gnu/libnvinfer_plugin.so)
+target_link_libraries(inferLib /usr/lib/x86_64-linux-gnu/libnvparsers.so)
+target_link_libraries(inferLib /usr/lib/x86_64-linux-gnu/libnvonnxparser.so)
 
 
 # transfer all headers to the include directory
